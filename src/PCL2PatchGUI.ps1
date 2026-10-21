@@ -40,9 +40,21 @@
 #  ── 界面 ────────────────────────────────────────────────────────────
 #  双击「PCL2补丁工具.vbs」启动（无黑框）；也可以直接
 #      powershell -NoProfile -ExecutionPolicy Bypass -File 本文件
+#
+#  ── 日志 ────────────────────────────────────────────────────────────
+#  每次运行都会在 %LOCALAPPDATA%\PCL2PatchTool\logs\ 下按天追加日志
+#  （PCL2PatchTool-yyyyMMdd.log，UTF-8），界面日志框里的内容全部落盘，
+#  另外记录启动环境、完整异常堆栈和每次操作结果。超过 2 MB 自动轮转成 .log.1。
+#  想换目录：给 -LogDir 传参数。
 # =====================================================================
 
-param([string]$PclPath = '')
+param(
+    [string]$PclPath = '',
+    [string]$LogDir  = ''
+)
+
+$script:ToolVersion = '1.1.0'
+$script:LogMaxBytes  = 2MB
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -78,14 +90,93 @@ $KnownMd5     = 'd6a946a007f8e84a8bfb0e239868f91a'
 
 $script:PclExe = ''
 
+# ---------------------------------------------------------------- 日志
+# 界面日志框 + 磁盘日志两条腿：界面给当下看，磁盘给事后查
+$script:LogWriter = $null
+$script:LogFile   = $null
+
+function Initialize-Log([string]$Dir) {
+    if (-not $Dir) { $Dir = Join-Path $env:LOCALAPPDATA 'PCL2PatchTool\logs' }
+    try {
+        if (-not (Test-Path -LiteralPath $Dir)) { New-Item -ItemType Directory -Force -Path $Dir | Out-Null }
+        $path = Join-Path $Dir ('PCL2PatchTool-{0}.log' -f (Get-Date -Format 'yyyyMMdd'))
+
+        # 单文件超过 2 MB 就轮转成 .1（只留一代，够排错又不占地方）
+        if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path).Length -gt $script:LogMaxBytes)) {
+            $rotated = "$path.1"
+            if (Test-Path -LiteralPath $rotated) { Remove-Item -LiteralPath $rotated -Force -ErrorAction SilentlyContinue }
+            Move-Item -LiteralPath $path -Destination $rotated -Force -ErrorAction SilentlyContinue
+        }
+
+        # 追加模式 + UTF-8 BOM：文件在当前位置追加时不会再写 BOM
+        $script:LogWriter = New-Object System.IO.StreamWriter(
+            $path, $true, (New-Object System.Text.UTF8Encoding($true)))
+        $script:LogWriter.AutoFlush = $true
+        $script:LogFile = $path
+    } catch {
+        $script:LogWriter = $null
+        $script:LogFile = $null
+        return
+    }
+
+    # 启动环境，排错时最先看的就是这一段
+    $osInfo = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+    $osText = if ($osInfo -and $osInfo.CurrentBuild) {
+        # Win11 的注册表 ProductName 仍写着 Windows 10，按 build 号纠正
+        $osName = $osInfo.ProductName
+        if ([int]$osInfo.CurrentBuild -ge 22000 -and $osName -like 'Windows 10*') {
+            $osName = $osName -replace '^Windows 10', 'Windows 11'
+        }
+        '{0} (build {1}.{2})' -f $osName, $osInfo.CurrentBuild, $osInfo.UBR
+    } else { [Environment]::OSVersion.VersionString }
+
+    $sep = '=' * 68
+    foreach ($line in @(
+        '', $sep,
+        ('PCL2 补丁工具 v{0}    启动' -f $script:ToolVersion),
+        ('时间      : {0}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')),
+        ('系统      : {0}  ({1})' -f $osText, [Environment]::MachineName),
+        ('PowerShell: {0}' -f $PSVersionTable.PSVersion),
+        ('工具路径  : {0}' -f $(if ($PSCommandPath) { $PSCommandPath } else { '(exe 内嵌脚本)' })),
+        ('进程      : {0}' -f (Get-Process -Id $PID).Path),
+        ('日志文件  : {0}' -f $script:LogFile),
+        $sep
+    )) { $script:LogWriter.WriteLine($line) }
+}
+
+function Write-LogFile([string]$line) {
+    if (-not $script:LogWriter) { return }
+    try { $script:LogWriter.WriteLine($line) } catch { $script:LogWriter = $null }
+}
+
+function Close-Log {
+    if (-not $script:LogWriter) { return }
+    try { $script:LogWriter.Flush(); $script:LogWriter.Dispose() } catch { }
+    $script:LogWriter = $null
+}
+
 # ---------------------------------------------------------------- 工具函数
 function Add-Log([string]$text) {
+    $now = Get-Date
+    Write-LogFile(('[{0}] {1}' -f $now.ToString('HH:mm:ss'), $text))
     if ($script:LogBox) {
-        $line = '[{0}] {1}{2}' -f (Get-Date -Format 'HH:mm:ss'), $text, "`r`n"
-        $script:LogBox.AppendText($line)
+        $script:LogBox.AppendText(('[{0}] {1}{2}' -f $now.ToString('HH:mm:ss'), $text, "`r`n"))
         $script:LogBox.SelectionStart = $script:LogBox.TextLength
         $script:LogBox.ScrollToCaret()
         [System.Windows.Forms.Application]::DoEvents()
+    }
+}
+
+# 异常：界面只显示一句话，磁盘里存完整堆栈
+function Add-LogError([string]$prefix, $err) {
+    Add-Log($prefix + $err.Exception.Message)
+    if (-not $script:LogWriter) { return }
+    Write-LogFile('    ' + $err.Exception.GetType().FullName + ': ' + $err.Exception.Message)
+    if ($err.InvocationInfo -and $err.InvocationInfo.PositionMessage) {
+        Write-LogFile('    位置: ' + ($err.InvocationInfo.PositionMessage -replace "`r?`n", ' '))
+    }
+    if ($err.ScriptStackTrace) {
+        Write-LogFile('    堆栈: ' + ($err.ScriptStackTrace -replace "`r?`n", ' <== '))
     }
 }
 
@@ -204,7 +295,7 @@ function Do-Check {
         }
     } catch {
         Set-Status '读取失败' '#C00000'
-        Add-Log ('读取失败：' + $_.Exception.Message)
+        Add-LogError('读取失败：', $_)
     }
 }
 
@@ -278,7 +369,7 @@ function Do-Apply {
             Set-Status '失败（已回滚）' '#C00000'
         }
     } catch {
-        Add-Log ('出错：' + $_.Exception.Message)
+        Add-LogError('出错：', $_)
         Set-Status '出错' '#C00000'
     }
 }
@@ -302,13 +393,13 @@ function Do-Restore {
         Add-Log "已从备份还原，MD5 $md5"
         Do-Check
     } catch {
-        Add-Log ('还原失败：' + $_.Exception.Message)
+        Add-LogError('还原失败：', $_)
     }
 }
 
 # ---------------------------------------------------------------- 界面
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'PCL2 下载解锁补丁'
+$form.Text = ('PCL2 下载解锁补丁 v{0}' -f $script:ToolVersion)
 $form.ClientSize = New-Object System.Drawing.Size(640, 500)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
@@ -360,17 +451,22 @@ $form.Controls.Add($btnApply)
 
 $btnCheck = New-Object System.Windows.Forms.Button
 $btnCheck.Text = '刷新状态'
-$btnCheck.SetBounds(166, 194, 110, 40)
+$btnCheck.SetBounds(162, 194, 110, 40)
 $form.Controls.Add($btnCheck)
 
 $btnRestore = New-Object System.Windows.Forms.Button
 $btnRestore.Text = '还原原版'
-$btnRestore.SetBounds(288, 194, 110, 40)
+$btnRestore.SetBounds(280, 194, 110, 40)
 $form.Controls.Add($btnRestore)
+
+$btnLog = New-Object System.Windows.Forms.Button
+$btnLog.Text = '打开日志'
+$btnLog.SetBounds(398, 194, 110, 40)
+$form.Controls.Add($btnLog)
 
 $btnClose = New-Object System.Windows.Forms.Button
 $btnClose.Text = '退出'
-$btnClose.SetBounds(514, 194, 100, 40)
+$btnClose.SetBounds(516, 194, 100, 40)
 $form.Controls.Add($btnClose)
 
 $gbLog = New-Object System.Windows.Forms.GroupBox
@@ -411,7 +507,31 @@ $btnApply.Add_Click({ Do-Apply })
 $btnRestore.Add_Click({ Do-Restore })
 $btnClose.Add_Click({ $form.Close() })
 
+# 打开日志：在资源管理器里定位到当天日志文件（选中，不是只开目录）
+$btnLog.Add_Click({
+    if (-not $script:LogFile -or -not (Test-Path -LiteralPath $script:LogFile)) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "还没有生成日志文件，可能没有写入权限。`r`n`r`n默认目录：`r`n" +
+                (Join-Path $env:LOCALAPPDATA 'PCL2PatchTool\logs'),
+            'PCL2 补丁工具', 'OK', 'Warning') | Out-Null
+        return
+    }
+    Add-Log "打开日志：$($script:LogFile)"
+    Start-Process explorer.exe -ArgumentList ('/select,"{0}"' -f $script:LogFile)
+})
+
+$form.Add_FormClosed({
+    Add-Log '工具退出'
+    Close-Log
+})
+
 $form.Add_Shown({
+    Initialize-Log -Dir $LogDir
+    if ($script:LogFile) {
+        Add-Log "日志文件：$($script:LogFile)"
+    } else {
+        Add-Log '写日志失败（目录不可写？），只保留界面日志'
+    }
     Add-Log '正在查找 PCL2 …'
     $found = Find-PclExe -Hint $PclPath
     if ($found) {

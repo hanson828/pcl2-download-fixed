@@ -15,7 +15,7 @@
       - -noConsole 才输出 winexe（无黑框）。
       - 产物容易被杀软/SmartScreen 启发式误报，分发时写清「右键属性 → 解除锁定」。
 #>
-param([string]$OutputPath = '')
+param([string]$OutputPath = '', [string]$Version = '1.1.0')
 
 $ErrorActionPreference = 'Stop'
 $ps2exeVersion = '1.0.18'
@@ -44,7 +44,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputPath) | Out
 if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }
 
 Write-Host "编译：$src -> $OutputPath"
-Invoke-PS2EXE -inputFile $src -outputFile $OutputPath -noConsole -STA -title 'PCL2 下载解锁补丁'
+Invoke-PS2EXE -inputFile $src -outputFile $OutputPath -noConsole -STA -title 'PCL2 下载解锁补丁' -version $Version
 
 $item = Get-Item -LiteralPath $OutputPath
 '完成：{0}（{1} 字节）' -f $item.FullName, $item.Length

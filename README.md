@@ -5,7 +5,7 @@
 
 文件大小不变、版本号不变、随时可以一键还原。
 
-> **直接下载**：[`PCL2PatchTool-v1.0.0.exe`](https://github.com/hanson828/pcl2-download-fixed/releases/latest) —— 单文件 GUI（52736 字节，SHA-256 `95464ca2…0cb85a`），免安装，双击即用。不想跑 exe 就用下面的脚本版。
+> **直接下载**：[`PCL2PatchTool-v1.1.0.exe`](https://github.com/hanson828/pcl2-download-fixed/releases/latest) —— 单文件 GUI（57856 字节，SHA-256 `41b67aaa…927af1`），免安装，双击即用。不想跑 exe 就用下面的脚本版。
 
 
 - Windows PowerShell 5.1 + WinForms，单个 `.ps1`，不依赖任何第三方模块
@@ -110,8 +110,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File src\PCL2PatchGUI.ps1 "D:\PCL
 - **打补丁** —— 备份（仅首次）→ 写入 48 字节 → 回读校验 → 成功弹窗；校验失败自动回滚
 - **刷新状态** —— 显示「已打补丁 / 未打补丁 / 未知」，附版本、大小、MD5（只读，不改文件）
 - **还原原版** —— 从 `.bak` 还原（二次确认）
+- **打开日志** —— 在资源管理器里定位到当天日志文件
 
 PCL2 正在运行时工具会先问要不要帮你关掉 —— 主程序被占用时无法写入。
+
+## 日志
+
+每次运行都会写磁盘日志，路径：
+
+```
+%LOCALAPPDATA%\PCL2PatchTool\logs\PCL2PatchTool-yyyyMMdd.log
+```
+
+- 界面日志框里的每一行都会落盘，**另加**界面看不到的内容：启动环境（版本 / 系统 build / PowerShell 版本 / 进程路径）、异常的类型 + 位置 + 完整堆栈、退出时间
+- 每天一个文件、UTF-8（带 BOM，记事本直接开）、追加写入，每次运行用一行 `====` 和启动信息分隔
+- 单文件超过 2 MB 自动轮转成 `.log.1`（只留一代）
+- 换目录：`powershell -File src\PCL2PatchGUI.ps1 -LogDir D:\logs`；目录不可写时只保留界面日志，不会因此崩溃
+
+排错时的用法：出问题先点「打开日志」，把当天那个文件末尾的一次运行块发出来，比截图有用。
 
 ## 安全设计
 
