@@ -5,6 +5,9 @@
 
 文件大小不变、版本号不变、随时可以一键还原。
 
+> **直接下载**：[`PCL2PatchTool-v1.0.0.exe`](https://github.com/hanson828/pcl2-download-fixed/releases/latest) —— 单文件 GUI（52736 字节，SHA-256 `95464ca2…0cb85a`），免安装，双击即用。不想跑 exe 就用下面的脚本版。
+
+
 - Windows PowerShell 5.1 + WinForms，单个 `.ps1`，不依赖任何第三方模块
 - 提供 GUI（打补丁 / 刷新状态 / 还原原版）和命令行参数
 - 首次打补丁自动备份成 `.bak`，写完回读校验，失败自动回滚
