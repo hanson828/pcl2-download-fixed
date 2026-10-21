@@ -1,0 +1,14 @@
+# 构建产物
+/dist/
+*.exe
+
+# 补丁工具运行时产生的备份
+*.bak
+
+# 本地脚本/编辑器
+.ps2exe/
+.work/
+.vs/
+.vscode/
+Thumbs.db
+desktop.ini
