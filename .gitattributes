@@ -1,0 +1,8 @@
+# 统一换行与编码处理
+# PowerShell 5.1 在 Windows 上更习惯 CRLF；.vbs 是 UTF-16LE，按二进制处理不要动
+* text=auto
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.vbs -text
+*.exe binary
+*.bak binary
